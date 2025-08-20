@@ -1,0 +1,16 @@
+torch
+transformers
+datasets
+accelerate
+bitsandbytes
+faiss-cpu
+sentence-transformers
+rank_bm25
+peft
+pdfplumber
+pdf2image
+pytesseract
+nltk
+numpy
+scikit-learn
+streamlit
