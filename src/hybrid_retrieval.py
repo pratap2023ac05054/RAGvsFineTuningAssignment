@@ -13,14 +13,21 @@ import nltk
 from response_generator import ResponseGenerator
 from guardrails import validate_query, validate_response
 
-# --- NLTK Data Download ---
+# --- NLTK Data Download Logic ---
+# This block ensures the necessary NLTK data is available before proceeding.
 try:
-    nltk.download('punkt')
-    nltk.download('stopwords')
+    print("Verifying NLTK data packages...")
+    nltk.data.find('tokenizers/punkt')
+    nltk.data.find('corpora/stopwords')
+    nltk.data.find('tokenizers/punkt_tab')
+    print("NLTK packages are already downloaded.")
 except LookupError:
-    print("Downloading NLTK data packages...")
+    print("One or more NLTK data packages not found. Downloading...")
     nltk.download('punkt', quiet=False)
     nltk.download('stopwords', quiet=False)
+    nltk.download('punkt_tab', quiet=False)
+    print("NLTK data download complete.")
+
 
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
