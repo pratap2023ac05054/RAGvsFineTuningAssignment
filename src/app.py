@@ -3,7 +3,7 @@
 import streamlit as st
 import time
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from sentence_transformers import SentenceTransformer
 import faiss
 import pickle
@@ -12,7 +12,7 @@ from peft import PeftModel
 
 # Import the components from your other files
 from response_generator import ResponseGenerator
-from guardrails import validate_query, validate_response
+from guardrails import validate_query
 from hybrid_retrieval import retrieve 
 
 # --- Configuration ---
@@ -20,11 +20,9 @@ FAISS_INDEX_PATH = "faiss_index.bin"
 BM25_INDEX_PATH = "bm25_index.pkl"
 CHUNK_DATA_PATH = "chunk_data.pkl"
 EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
-# Updated the RAG generator model to Zephyr-7B-Beta
-RAG_GENERATOR_MODEL = "HuggingFaceH4/zephyr-7b-beta"
-# The fine-tuned model components remain as they were
-FINETUNED_BASE_MODEL = "distilgpt2" 
-FINETUNED_ADAPTER_DIR = "./distilgpt2-finetuned-fast"
+RAG_GENERATOR_MODEL = "gpt2-medium"
+FINETUNED_BASE_MODEL = "distilgpt2" # The base model used for fine-tuning
+FINETUNED_ADAPTER_DIR = "./distilgpt2-finetuned-fast" # The directory of your fine-tuned adapters
 
 # --- Caching ---
 # Use Streamlit's caching to load models and data only once.
@@ -44,7 +42,6 @@ def load_components():
             components["bm25_index"] = pickle.load(f)
         with open(CHUNK_DATA_PATH, 'rb') as f:
             components["chunk_data"] = pickle.load(f)
-        # This will now load the Zephyr-7B model
         components["rag_generator"] = ResponseGenerator(model_name=RAG_GENERATOR_MODEL)
         
         # Load Fine-Tuned Model components
@@ -69,10 +66,6 @@ def load_components():
     except FileNotFoundError as e:
         st.error(f"Error loading components: {e}. Please make sure 'build_indices.py' has been run successfully.")
         return None
-    except Exception as e:
-        st.error(f"An error occurred while loading models: {e}")
-        return None
-
 
 def generate_from_finetuned(model, tokenizer, query):
     """Generates a response directly from the fine-tuned model."""

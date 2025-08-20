@@ -1,108 +1,117 @@
-# response_generator.py
-
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 class ResponseGenerator:
     """
-    A class to handle the loading of a language model and the generation of answers
-    based on a query and provided context.
+    Loads a language model and generates an answer from query + retrieved context.
     """
-    def __init__(self, model_name: str = "HuggingFaceH4/zephyr-7b-beta"):
-        """
-        Initializes the generator by loading the model and tokenizer.
-
-        Args:
-            model_name (str): The name of the Hugging Face model to use.
-        """
+    def __init__(self, model_name: str = "gpt2-medium"):
         print(f"Loading generator model '{model_name}'...")
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        
+
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-        if self.device == "cuda":
-            # Configure 4-bit quantization to load the large model efficiently on GPU
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.float16,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_use_double_quant=True,
-            )
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                quantization_config=quantization_config,
-                device_map="auto", # Automatically use GPU
-            )
-        else:
-            # Load the model without quantization for CPU
-            print("CUDA not available. Loading model on CPU. This may be slow and memory-intensive.")
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_name
-            ).to(self.device)
+        # GPT-2 has no pad token; use EOS and left padding to play nice with generate()
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.tokenizer.padding_side = "left"
 
-        print(f"Model loaded successfully on device: {self.device}")
+        self.model = AutoModelForCausalLM.from_pretrained(model_name).to(self.device)
+
+        # Max positional window (1024 for GPT-2/Medium)
+        self.max_positions = getattr(self.model.config, "n_positions",
+                              getattr(self.model.config, "max_position_embeddings", 1024))
+        # Help tokenizers respect the true window
+        self.tokenizer.model_max_length = self.max_positions
+
+        print(f"Model loaded on {self.device}. Max positions: {self.max_positions}")
 
     def generate(self, query: str, retrieved_chunks: list[dict]) -> str:
         """
         Generates a final answer using the retrieved context.
-
-        Args:
-            query (str): The user's original question.
-            retrieved_chunks (list[dict]): A list of dictionaries, each containing a text chunk.
-
-        Returns:
-            str: The generated, cleaned-up answer.
         """
-        context_passages = [chunk['text'] for chunk in retrieved_chunks]
-        
-        max_length = 4096 
+        # 1) Prompt building
+        context_passages = [c["text"] for c in retrieved_chunks]
+        prompt_tmpl = (
+            "Answer the following question based on the context provided below.\n\n"
+            "Context:\n{context}\n\n"
+            "Question: {question}\n\n"
+            "Answer:"
+        )
+
+        # Reserve some tokens for the question and header/footer text
+        probe = self.tokenizer.encode(prompt_tmpl.format(context="", question=query), add_special_tokens=False)
+        # Keep a small buffer for safety
+        reserved_for_prompt = len(probe) + 16
+
+        max_context_tokens = max(0, self.max_positions - reserved_for_prompt)
         packed_context = ""
+        # Greedily pack passages until we run out of budget
         for passage in context_passages:
-            if len(self.tokenizer.encode(packed_context + passage)) < max_length - 512: # Reserve space for prompt/query
-                packed_context += passage + "\n\n"
+            trial = packed_context + ("" if not packed_context else "\n") + passage
+            if len(self.tokenizer.encode(trial, add_special_tokens=False)) <= max_context_tokens:
+                packed_context = trial
             else:
                 break
-        
+
         if not packed_context.strip():
             return "Could not generate an answer because no relevant context was found."
 
-        # Using the prompt format for Zephyr models
-        messages = [
-            {
-                "role": "system",
-                "content": "You are a friendly and helpful assistant that answers questions based on the provided context.",
-            },
-            {
-                "role": "user",
-                "content": f"Context:\n{packed_context}\n\nBased on the context provided, please answer the following question:\n{query}",
-            },
-        ]
-        
-        final_prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        final_prompt = prompt_tmpl.format(context=packed_context.strip(), question=query)
 
-        inputs = self.tokenizer(final_prompt, return_tensors="pt").to(self.device)
+        # 2) Tokenize input with strict truncation to model window
+        inputs = self.tokenizer(
+            final_prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=self.max_positions
+        )
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
+        input_len = int(inputs["input_ids"].shape[-1])
+
+        # 3) Compute safe generation budget
+        # We cannot exceed model positional limit during generation.
+        room = max(0, self.max_positions - input_len)
+        # Target up to 150 new tokens, but never exceed remaining room - 1 (safety margin)
+        target_new = 150
+        safe_new = max(1, min(target_new, max(0, room - 1)))
+
+        # If no room at all, aggressively trim input to leave some space for the answer
+        if safe_new < 1:
+            keep = max(32, self.max_positions - 128)  # keep most recent part of the prompt
+            inputs = self.tokenizer(
+                final_prompt,
+                return_tensors="pt",
+                truncation=True,
+                max_length=keep
+            )
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            input_len = int(inputs["input_ids"].shape[-1])
+            room = max(0, self.max_positions - input_len)
+            safe_new = max(1, min(128, max(0, room - 1)))
+
+        # 4) Generate
         output_sequences = self.model.generate(
             **inputs,
-            max_new_tokens=250,
+            max_new_tokens=safe_new,
             temperature=0.7,
             top_p=0.95,
-            do_sample=True,
             num_return_sequences=1,
-            pad_token_id=self.tokenizer.eos_token_id
+            pad_token_id=self.tokenizer.eos_token_id,
+            no_repeat_ngram_size=2,
+            do_sample=True,
+            use_cache=True  # default True; being explicit
         )
 
+        # 5) Decode and extract answer
         generated_text = self.tokenizer.decode(output_sequences[0], skip_special_tokens=True)
-        
-        # Clean the output to remove the prompt part
-        # The answer is what comes after the final <|assistant|> tag
-        parts = generated_text.split("<|assistant|>\n")
-        if len(parts) > 1:
-            return parts[-1].strip()
-        else:
-            # Fallback if the model doesn't follow the template perfectly
-            # This can happen if the generated text is very short
-            user_prompt_end = "please answer the following question:\n" + query
-            if user_prompt_end in generated_text:
-                return generated_text.split(user_prompt_end)[-1].strip()
-            return "Could not extract a clear answer from the model's response."
+        answer = generated_text.replace(final_prompt, "").strip()
+        # Take the first coherent line
+        answer = answer.split("\n")[0].strip()
+
+        # Optional: if generation is empty after tight budgets, provide a fallback note
+        if not answer:
+            answer = "I couldn’t produce a confident answer within the model’s context window."
+
+        return answer
