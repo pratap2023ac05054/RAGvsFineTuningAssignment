@@ -15,8 +15,8 @@ from guardrails import validate_query, validate_response
 
 # --- NLTK Data Download ---
 try:
-    nltk.data.find('tokenizers/punkt')
-    nltk.data.find('corpora/stopwords')
+    nltk.download('punkt')
+    nltk.download('stopwords')
 except LookupError:
     print("Downloading NLTK data packages...")
     nltk.download('punkt', quiet=False)
