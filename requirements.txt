@@ -1,6 +1,7 @@
 torch
 transformers
 datasets
+pyarrow
 accelerate
 bitsandbytes
 faiss-cpu
