@@ -8,7 +8,7 @@ class ResponseGenerator:
     A class to handle the loading of a language model and the generation of answers
     based on a query and provided context.
     """
-    def __init__(self, model_name: str = "mistralai/Mistral-7B-Instruct-v0.2"):
+    def __init__(self, model_name: str = "HuggingFaceH4/zephyr-7b-beta"):
         """
         Initializes the generator by loading the model and tokenizer.
 
@@ -18,12 +18,7 @@ class ResponseGenerator:
         print(f"Loading generator model '{model_name}'...")
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         
-        # --- ADD YOUR HUGGING FACE TOKEN HERE ---
-        # Replace "hf_YOUR_TOKEN_HERE" with your actual access token
-        # Get a token from: https://huggingface.co/settings/tokens
-        hf_token = "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" 
-
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, token=hf_token)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
         if self.device == "cuda":
             # Configure 4-bit quantization to load the large model efficiently on GPU
@@ -37,14 +32,12 @@ class ResponseGenerator:
                 model_name,
                 quantization_config=quantization_config,
                 device_map="auto", # Automatically use GPU
-                token=hf_token
             )
         else:
             # Load the model without quantization for CPU
             print("CUDA not available. Loading model on CPU. This may be slow and memory-intensive.")
             self.model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                token=hf_token
+                model_name
             ).to(self.device)
 
         print(f"Model loaded successfully on device: {self.device}")
@@ -52,6 +45,13 @@ class ResponseGenerator:
     def generate(self, query: str, retrieved_chunks: list[dict]) -> str:
         """
         Generates a final answer using the retrieved context.
+
+        Args:
+            query (str): The user's original question.
+            retrieved_chunks (list[dict]): A list of dictionaries, each containing a text chunk.
+
+        Returns:
+            str: The generated, cleaned-up answer.
         """
         context_passages = [chunk['text'] for chunk in retrieved_chunks]
         
@@ -66,9 +66,16 @@ class ResponseGenerator:
         if not packed_context.strip():
             return "Could not generate an answer because no relevant context was found."
 
-        # Using the prompt format for Mistral Instruct models
+        # Using the prompt format for Zephyr models
         messages = [
-            {"role": "user", "content": f"Context:\n{packed_context}\n\nBased on the context provided, please answer the following question:\n{query}"}
+            {
+                "role": "system",
+                "content": "You are a friendly and helpful assistant that answers questions based on the provided context.",
+            },
+            {
+                "role": "user",
+                "content": f"Context:\n{packed_context}\n\nBased on the context provided, please answer the following question:\n{query}",
+            },
         ]
         
         final_prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -88,9 +95,14 @@ class ResponseGenerator:
         generated_text = self.tokenizer.decode(output_sequences[0], skip_special_tokens=True)
         
         # Clean the output to remove the prompt part
-        # The answer is what comes after the final [/INST] tag
-        parts = generated_text.split("[/INST]")
+        # The answer is what comes after the final <|assistant|> tag
+        parts = generated_text.split("<|assistant|>\n")
         if len(parts) > 1:
             return parts[-1].strip()
         else:
+            # Fallback if the model doesn't follow the template perfectly
+            # This can happen if the generated text is very short
+            user_prompt_end = "please answer the following question:\n" + query
+            if user_prompt_end in generated_text:
+                return generated_text.split(user_prompt_end)[-1].strip()
             return "Could not extract a clear answer from the model's response."

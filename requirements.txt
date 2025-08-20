@@ -1,5 +1,4 @@
 torch
-pyarrow
 transformers
 datasets
 accelerate

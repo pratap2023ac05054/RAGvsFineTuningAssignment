@@ -20,10 +20,11 @@ FAISS_INDEX_PATH = "faiss_index.bin"
 BM25_INDEX_PATH = "bm25_index.pkl"
 CHUNK_DATA_PATH = "chunk_data.pkl"
 EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
-# Updated the RAG generator model to Mistral-7B
-RAG_GENERATOR_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
-FINETUNED_BASE_MODEL = "distilgpt2" # The base model used for fine-tuning
-FINETUNED_ADAPTER_DIR = "./distilgpt2-finetuned-fast" # The directory of your fine-tuned adapters
+# Updated the RAG generator model to Zephyr-7B-Beta
+RAG_GENERATOR_MODEL = "HuggingFaceH4/zephyr-7b-beta"
+# The fine-tuned model components remain as they were
+FINETUNED_BASE_MODEL = "distilgpt2" 
+FINETUNED_ADAPTER_DIR = "./distilgpt2-finetuned-fast"
 
 # --- Caching ---
 # Use Streamlit's caching to load models and data only once.
@@ -43,7 +44,7 @@ def load_components():
             components["bm25_index"] = pickle.load(f)
         with open(CHUNK_DATA_PATH, 'rb') as f:
             components["chunk_data"] = pickle.load(f)
-        # This will now load the Mistral-7B model
+        # This will now load the Zephyr-7B model
         components["rag_generator"] = ResponseGenerator(model_name=RAG_GENERATOR_MODEL)
         
         # Load Fine-Tuned Model components
@@ -69,9 +70,7 @@ def load_components():
         st.error(f"Error loading components: {e}. Please make sure 'build_indices.py' has been run successfully.")
         return None
     except Exception as e:
-        # Catch other potential errors during model loading, like authentication issues
         st.error(f"An error occurred while loading models: {e}")
-        st.info("If you are using a gated model like Mistral or Llama, please ensure you have requested access and provided a valid Hugging Face token in 'response_generator.py'.")
         return None
 
 
