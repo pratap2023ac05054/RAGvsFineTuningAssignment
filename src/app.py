@@ -3,7 +3,7 @@
 import streamlit as st
 import time
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from sentence_transformers import SentenceTransformer
 import faiss
 import pickle
@@ -12,7 +12,7 @@ from peft import PeftModel
 
 # Import the components from your other files
 from response_generator import ResponseGenerator
-from guardrails import validate_query
+from guardrails import validate_query, validate_response
 from hybrid_retrieval import retrieve 
 
 # --- Configuration ---
@@ -21,8 +21,9 @@ BM25_INDEX_PATH = "bm25_index.pkl"
 CHUNK_DATA_PATH = "chunk_data.pkl"
 EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
 RAG_GENERATOR_MODEL = "gpt2-medium"
-FINETUNED_BASE_MODEL = "distilgpt2" # The base model used for fine-tuning
-FINETUNED_ADAPTER_DIR = "./distilgpt2-finetuned-fast" # The directory of your fine-tuned adapters
+# Updated to point to the gpt2-medium fine-tuned model
+FINETUNED_BASE_MODEL = "gpt2-medium" 
+FINETUNED_ADAPTER_DIR = "./gpt2-medium-finetuned"
 
 # --- Caching ---
 # Use Streamlit's caching to load models and data only once.
@@ -166,7 +167,7 @@ if components:
                             with col1:
                                 st.metric(label="Confidence Score", value="N/A")
                             with col2:
-                                st.metric(label="Method", value="Fine-Tuned Model")
+                                st.metric(label="Method", value="Fine-Tuned (GPT-2 Medium)")
                             with col3:
                                 st.metric(label="Inference Time", value=f"{response_time:.2f} s")
 else:
